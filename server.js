@@ -30,7 +30,20 @@ const Admin = require('./Models/admin');
 const app = express();
 const port = 3001;
 const cors = require('cors');
-app.use(cors());
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://nurseconnect-pula.netlify.app' 
+];
+
+const corsOptions = {
+  origin(origin, cb) {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization']
+};
 
 
 app.use(express.json({ limit: '10mb' })); 
@@ -1133,3 +1146,4 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
