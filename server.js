@@ -41,7 +41,28 @@ function fixMaterialUrls(material, req) {
 function cleanPredmetParam(p) {
   if (!p) return p;
   try { p = decodeURIComponent(p); } catch {}
-  return p.replace(/\s*\(.*?\)\s*$/, '').trim();
+ 
+  return p.replace(/\s*\(.*?\)\s*$/i, '').replace(/\s+/g, ' ').trim();
+}
+
+
+async function findBySubject(model, column, rawPredmet, extraWhere = {}) {
+  const predmet = cleanPredmetParam(rawPredmet);
+  const whereBase = { ...extraWhere };
+
+
+  let rows = await model.findAll({ where: { ...whereBase, [column]: { [Op.iLike]: predmet } } });
+  if (rows.length) return rows;
+
+ 
+  rows = await model.findAll({ where: { ...whereBase, [column]: { [Op.iLike]: `%${predmet}%` } } });
+  if (rows.length) return rows;
+
+  
+  const words = predmet.split(' ').filter(Boolean);
+  const andConds = words.map(w => ({ [column]: { [Op.iLike]: `%${w}%` } }));
+  rows = await model.findAll({ where: { ...whereBase, [Op.and]: andConds } });
+  return rows;
 }
 
 
@@ -325,9 +346,15 @@ app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
     const { razred } = req.params;
     console.log('[DBG] /materials predmet:', raw, '=>', predmet, 'razred:', razred);
 
-    const materijali = await Material.findAll({
-      where: { subject: { [Op.iLike]: predmet }, razred }
-    });
+    const p = cleanPredmetParam(predmet);
+let materijali = await Material.findAll({ where: { subject: { [Op.iLike]: p }, razred } });
+
+if (!materijali.length) {
+  materijali = await Material.findAll({ where: { subject: { [Op.iLike]: `%${p}%` }, razred } });
+}
+
+console.log('[DBG] /materials/subject raw:', predmet, 'clean:', p, 'razred:', razred, 'found:', materijali.length);
+
 
     const out = materijali.map(m => fixMaterialUrls(m, req));
     res.status(200).json(out);
@@ -381,11 +408,14 @@ app.get('/quizzes/subject/:predmet', async (req, res) => {
     const predmet = cleanPredmetParam(raw);
     console.log('[DBG] /quizzes predmet:', raw, '=>', predmet);
 
-    const kvizovi = await Quiz.findAll({
-      // case-insensitive usporedba, bez (izborni)
-      where: { predmet: { [Op.iLike]: predmet } }
-      // Ako hoćeš još “mekše”: [Op.iLike]: `%${predmet}%`
-    });
+    const p = cleanPredmetParam(req.params.predmet);
+let kvizovi = await Quiz.findAll({ where: { predmet: { [Op.iLike]: p } } });
+
+if (!kvizovi.length) {
+  kvizovi = await Quiz.findAll({ where: { predmet: { [Op.iLike]: `%${p}%` } } });
+}
+
+console.log('[DBG] /quizzes/subject raw:', req.params.predmet, 'clean:', p, 'found:', kvizovi.length);
 
     const kvizoviParsed = kvizovi.map(kviz => {
       let pitanja = kviz.pitanja;
@@ -1203,6 +1233,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
