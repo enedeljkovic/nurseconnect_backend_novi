@@ -38,6 +38,14 @@ function fixMaterialUrls(material, req) {
 }
 
 
+function cleanPredmetParam(p) {
+  if (!p) return p;
+  try { p = decodeURIComponent(p); } catch {}
+  return p.replace(/\s*\(.*?\)\s*$/, '').trim();
+}
+
+
+
 const Student = require('./Models/student');
 const Material = require('./Models/material');
 const Quiz = require('./Models/quiz');
@@ -1191,6 +1199,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
