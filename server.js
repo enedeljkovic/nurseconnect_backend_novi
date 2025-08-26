@@ -12,6 +12,8 @@ const SolvedQuiz = require('./Models/SolvedQuiz');
 const ReadMaterial = require('./Models/ReadMaterial');
 const Message = require('./Models/message');
 const { Op } = require('sequelize');
+const Sequelize = require('sequelize');
+
 
 
 function getBaseFromReq(req) {
@@ -1188,6 +1190,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
