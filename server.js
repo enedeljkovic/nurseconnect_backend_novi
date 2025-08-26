@@ -318,17 +318,19 @@ app.delete('/materials/:id', async (req, res) => {
     }
   });
   
- app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
+app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
   try {
-    const predmet = (req.params.predmet || '').trim();   
-    const razred  = req.params.razred;
+    const raw = req.params.predmet;
+    const predmet = cleanPredmetParam(raw);
+    const { razred } = req.params;
+    console.log('[DBG] /materials predmet:', raw, '=>', predmet, 'razred:', razred);
 
     const materijali = await Material.findAll({
-      where: { subject: predmet, razred }                
+      where: { subject: { [Op.iLike]: predmet }, razred }
     });
 
-    
-    res.status(200).json(materijali);
+    const out = materijali.map(m => fixMaterialUrls(m, req));
+    res.status(200).json(out);
   } catch (err) {
     console.error('Greška pri dohvaćanju materijala po predmetu i razredu:', err);
     res.status(500).json({ error: 'Greška na serveru.' });
@@ -375,13 +377,14 @@ app.get('/quizzes/:id', async (req, res) => {
 
 app.get('/quizzes/subject/:predmet', async (req, res) => {
   try {
-    // ✅ minimalni fix: makni višak razmaka iz URL parametra
-    const predmet = (req.params.predmet || '').trim();
+    const raw = req.params.predmet;
+    const predmet = cleanPredmetParam(raw);
+    console.log('[DBG] /quizzes predmet:', raw, '=>', predmet);
 
     const kvizovi = await Quiz.findAll({
-      where: { predmet },
-      // (opcionalno) order da novi budu prvi:
-      // order: [['id', 'DESC']]
+      // case-insensitive usporedba, bez (izborni)
+      where: { predmet: { [Op.iLike]: predmet } }
+      // Ako hoćeš još “mekše”: [Op.iLike]: `%${predmet}%`
     });
 
     const kvizoviParsed = kvizovi.map(kviz => {
@@ -398,6 +401,7 @@ app.get('/quizzes/subject/:predmet', async (req, res) => {
     res.status(500).json({ error: 'Greška na serveru.', detalji: err.message });
   }
 });
+
 
 
 
@@ -1199,6 +1203,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
