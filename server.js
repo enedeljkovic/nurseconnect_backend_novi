@@ -339,22 +339,26 @@ app.delete('/materials/:id', async (req, res) => {
     }
   });
   
+// na vrhu jednom: const { Op } = require('sequelize');
+
 app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
   try {
     const raw = req.params.predmet;
-    const predmet = cleanPredmetParam(raw);
     const { razred } = req.params;
-    console.log('[DBG] /materials predmet:', raw, '=>', predmet, 'razred:', razred);
 
-    const p = cleanPredmetParam(predmet);
-let materijali = await Material.findAll({ where: { subject: { [Op.iLike]: p }, razred } });
+    
+    const p = cleanPredmetParam(raw);
+    console.log('[DBG] /materials predmet RAW:', raw, 'CLEAN:', p, 'razred:', razred);
 
-if (!materijali.length) {
-  materijali = await Material.findAll({ where: { subject: { [Op.iLike]: `%${p}%` }, razred } });
-}
+    
+    let materijali = await Material.findAll({
+      where: {
+        subject: { [Op.iLike]: `%${p}%` },
+        razred
+      }
+    });
 
-console.log('[DBG] /materials/subject raw:', predmet, 'clean:', p, 'razred:', razred, 'found:', materijali.length);
-
+    console.log('[DBG] /materials found:', materijali.length);
 
     const out = materijali.map(m => fixMaterialUrls(m, req));
     res.status(200).json(out);
@@ -363,6 +367,7 @@ console.log('[DBG] /materials/subject raw:', predmet, 'clean:', p, 'razred:', ra
     res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
 
 
 
@@ -405,17 +410,15 @@ app.get('/quizzes/:id', async (req, res) => {
 app.get('/quizzes/subject/:predmet', async (req, res) => {
   try {
     const raw = req.params.predmet;
-    const predmet = cleanPredmetParam(raw);
-    console.log('[DBG] /quizzes predmet:', raw, '=>', predmet);
+    const p = cleanPredmetParam(raw);
+    console.log('[DBG] /quizzes predmet RAW:', raw, 'CLEAN:', p);
 
-    const p = cleanPredmetParam(req.params.predmet);
-let kvizovi = await Quiz.findAll({ where: { predmet: { [Op.iLike]: p } } });
+ 
+    let kvizovi = await Quiz.findAll({
+      where: { predmet: { [Op.iLike]: `%${p}%` } }
+    });
 
-if (!kvizovi.length) {
-  kvizovi = await Quiz.findAll({ where: { predmet: { [Op.iLike]: `%${p}%` } } });
-}
-
-console.log('[DBG] /quizzes/subject raw:', req.params.predmet, 'clean:', p, 'found:', kvizovi.length);
+    console.log('[DBG] /quizzes found:', kvizovi.length);
 
     const kvizoviParsed = kvizovi.map(kviz => {
       let pitanja = kviz.pitanja;
@@ -431,6 +434,7 @@ console.log('[DBG] /quizzes/subject raw:', req.params.predmet, 'clean:', p, 'fou
     res.status(500).json({ error: 'Greška na serveru.', detalji: err.message });
   }
 });
+
 
 
 
@@ -1233,6 +1237,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
