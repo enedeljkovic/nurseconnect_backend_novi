@@ -797,28 +797,23 @@ app.get('/admin/statistika', async (req, res) => {
 
 
 app.get('/profesori/:id', async (req, res) => {
-  const id = req.params.id;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Neispravan ID (mora biti broj).' });
+  }
 
   try {
     const profesor = await Profesor.findByPk(id, {
-      include: [
-        {
-          model: Subject,
-          through: { attributes: [] }, 
-        },
-      ],
+      include: [{ model: Subject, through: { attributes: [] } }],
     });
-
-    if (!profesor) {
-      return res.status(404).json({ error: 'Profesor nije pronađen.' });
-    }
-
+    if (!profesor) return res.status(404).json({ error: 'Profesor nije pronađen.' });
     res.json(profesor);
   } catch (err) {
     console.error('Greška pri dohvaćanju profesora:', err);
     res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
 
 app.put('/profesori/:id', async (req, res) => {
   const { id } = req.params;
@@ -1165,6 +1160,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
