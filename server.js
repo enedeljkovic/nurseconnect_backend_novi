@@ -1,6 +1,7 @@
+require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
-const { Sequelize } = require('sequelize');
+const sequelize = require('./Models/db'); 
 const Profesor = require('./Models/profesor');
 const multer = require('multer');
 const path = require('path');
@@ -11,21 +12,8 @@ const SolvedQuiz = require('./Models/SolvedQuiz');
 const ReadMaterial = require('./Models/ReadMaterial');
 const Message = require('./Models/message');
 const { Op } = require('sequelize');
-require('dotenv').config();
 
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ||
-  'postgresql://postgres.cpyihbhumjsuedrratmr:fdg5ahee@aws-1-eu-central-2.pooler.supabase.com:6543/postgres';
-
-const sequelize = new Sequelize(DATABASE_URL, {
-  dialect: 'postgres',
-  logging: false,
-  pool: { max: 15, min: 0, acquire: 30000, idle: 10000 },
-  dialectOptions: {
-    ssl: { require: true, rejectUnauthorized: false }
-  }
-});
 
 const Student = require('./Models/student');
 const Material = require('./Models/material');
@@ -1177,6 +1165,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
