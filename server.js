@@ -13,6 +13,11 @@ const Message = require('./Models/message');
 const { Op } = require('sequelize');
 require('dotenv').config();
 
+
+const DATABASE_URL =
+  process.env.DATABASE_URL ||
+  'postgresql://postgres.cpyihbhumjsuedrratmr:fdg5ahee@aws-1-eu-central-2.pooler.supabase.com:6543/postgres';
+
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: 'postgres',
   logging: false,
@@ -1172,5 +1177,6 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
