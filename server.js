@@ -14,6 +14,27 @@ const Message = require('./Models/message');
 const { Op } = require('sequelize');
 
 
+function getBaseFromReq(req) {
+  
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+
+function fixUrl(url, req) {
+  if (!url) return url;
+  const base = getBaseFromReq(req);
+  return url.replace(/^https?:\/\/localhost:\d+/i, base);
+}
+
+
+function fixMaterialUrls(material, req) {
+  if (!material) return material;
+  const m = material.toJSON ? material.toJSON() : { ...material };
+  m.fileUrl  = fixUrl(m.fileUrl, req);
+  m.imageUrl = fixUrl(m.imageUrl, req);
+  return m;
+}
+
 
 const Student = require('./Models/student');
 const Material = require('./Models/material');
@@ -21,6 +42,7 @@ const Quiz = require('./Models/quiz');
 const Admin = require('./Models/admin');
 
 const app = express();
+app.set('trust proxy', 1);
 const port = 3001;
 const cors = require('cors');
 const allowedOrigins = [
@@ -68,7 +90,8 @@ app.options('*', (req, res) => {
 app.use(express.json({ limit: '10mb' })); 
 
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); 
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+ 
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -201,14 +224,16 @@ app.post('/login', async (req, res) => {
 
 
 app.get('/materials', async (req, res) => {
-    try {
-      const allMaterials = await Material.findAll();
-      res.status(200).json(allMaterials);
-    } catch (error) {
-      console.error('Greška pri dohvaćanju materijala:', error);
-      res.status(500).json({ error: 'Greška na serveru prilikom dohvaćanja materijala.' });
-    }
-  });
+  try {
+    const all = await Material.findAll();
+    const out = all.map(m => fixMaterialUrls(m, req));
+    res.status(200).json(out);
+  } catch (error) {
+    console.error('Greška pri dohvaćanju materijala:', error);
+    res.status(500).json({ error: 'Greška na serveru prilikom dohvaćanja materijala.' });
+  }
+});
+
   
 app.post('/materials', async (req, res) => {
     console.log(req.body);
@@ -283,7 +308,7 @@ app.delete('/materials/:id', async (req, res) => {
     }
   });
   
-  app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
+ app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
   try {
     const { predmet, razred } = req.params;
 
@@ -291,12 +316,14 @@ app.delete('/materials/:id', async (req, res) => {
       where: { subject: predmet, razred }
     });
 
-    res.status(200).json(materijali);
+    const out = materijali.map(m => fixMaterialUrls(m, req));
+    res.status(200).json(out);
   } catch (err) {
     console.error('Greška pri dohvaćanju materijala po predmetu i razredu:', err);
     res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
 
 
 
@@ -719,13 +746,14 @@ app.get('/subjects', async (req, res) => {
 
 
 app.post('/upload', upload.single('file'), (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ error: 'Datoteka nije poslana.' });
-    }
-  
-    const filePath = `http://localhost:3001/uploads/${req.file.filename}`;
-    res.status(200).json({ fileUrl: filePath });
-  });
+  if (!req.file) {
+    return res.status(400).json({ error: 'Datoteka nije poslana.' });
+  }
+  const baseUrl = `${req.protocol}://${req.get('host')}`; 
+  const fileUrl = `${baseUrl}/uploads/${encodeURIComponent(req.file.filename)}`;
+  return res.status(200).json({ fileUrl });
+});
+
   
 
   app.post('/admin/login', async (req, res) => {
@@ -1160,6 +1188,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
