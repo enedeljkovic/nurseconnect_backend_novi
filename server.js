@@ -312,19 +312,21 @@ app.delete('/materials/:id', async (req, res) => {
   
  app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
   try {
-    const { predmet, razred } = req.params;
+    const predmet = (req.params.predmet || '').trim();   
+    const razred  = req.params.razred;
 
     const materijali = await Material.findAll({
-      where: { subject: predmet, razred }
+      where: { subject: predmet, razred }                
     });
 
-    const out = materijali.map(m => fixMaterialUrls(m, req));
-    res.status(200).json(out);
+    
+    res.status(200).json(materijali);
   } catch (err) {
     console.error('Greška pri dohvaćanju materijala po predmetu i razredu:', err);
     res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
 
 
 
@@ -365,31 +367,30 @@ app.get('/quizzes/:id', async (req, res) => {
 
 app.get('/quizzes/subject/:predmet', async (req, res) => {
   try {
-  const kvizovi = await Quiz.findAll({
-    where: {
-      predmet: req.params.predmet
-    }
-  });
+    // ✅ minimalni fix: makni višak razmaka iz URL parametra
+    const predmet = (req.params.predmet || '').trim();
 
-  const kvizoviParsed = kvizovi.map(kviz => {
-    let pitanja = kviz.pitanja;
-    if (typeof pitanja === 'string') {
-      try {
-        pitanja = JSON.parse(pitanja);
-      } catch (e) {
-        pitanja = [];
+    const kvizovi = await Quiz.findAll({
+      where: { predmet },
+      // (opcionalno) order da novi budu prvi:
+      // order: [['id', 'DESC']]
+    });
+
+    const kvizoviParsed = kvizovi.map(kviz => {
+      let pitanja = kviz.pitanja;
+      if (typeof pitanja === 'string') {
+        try { pitanja = JSON.parse(pitanja); } catch { pitanja = []; }
       }
-    }
-    return { ...kviz.toJSON(), pitanja };
-  });
+      return { ...kviz.toJSON(), pitanja };
+    });
 
-  res.json(kvizoviParsed);
-} catch (err) {
-  console.error('🔥 Greska u /quizzes/subject/:predmet:', err);
-  res.status(500).json({ error: 'Greška na serveru.', detalji: err.message });
-}
-
+    res.json(kvizoviParsed);
+  } catch (err) {
+    console.error('🔥 Greska u /quizzes/subject/:predmet:', err);
+    res.status(500).json({ error: 'Greška na serveru.', detalji: err.message });
+  }
 });
+
 
 
 app.post('/quizzes', async (req, res) => {
@@ -1190,6 +1191,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
