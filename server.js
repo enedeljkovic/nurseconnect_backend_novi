@@ -306,30 +306,28 @@ app.post('/materials', async (req, res) => {
 
 
 app.put('/materials/:id', async (req, res) => {
-    const materialId = parseInt(req.params.id);
-    const { naziv, opis, imageUrl, fileUrl } = req.body;
-  
-    try {
-      const material = await Material.findByPk(materialId);
-      if (!material) {
-        return res.status(404).json({ error: 'Materijal nije pronađen' });
-      }
-  
-      await material.update({
-        naziv,
-        opis,
-        imageUrl: imageUrl || null,
-        fileUrl: fileUrl || null,
-        subject,
-        razred
-      });
-  
-      res.status(200).json(material);
-    } catch (error) {
-      console.error('Greška pri ažuriranju materijala:', error);
-      res.status(500).json({ error: 'Greška pri ažuriranju materijala' });
-    }
-  });
+  const materialId = Number(req.params.id);
+  const { naziv, opis, imageUrl, fileUrl, subject, razred } = req.body;
+
+  try {
+    const material = await Material.findByPk(materialId);
+    if (!material) return res.status(404).json({ error: 'Materijal nije pronađen' });
+
+    await material.update({
+      naziv,
+      opis,
+      imageUrl: imageUrl ?? null,
+      fileUrl:  fileUrl  ?? null,
+      subject:  subject  ?? material.subject,
+      razred:   razred   ?? material.razred
+    });
+
+    res.status(200).json(material);
+  } catch (error) {
+    console.error('Greška pri ažuriranju materijala:', error);
+    res.status(500).json({ error: 'Greška pri ažuriranju materijala' });
+  }
+});
 
 app.delete('/materials/:id', async (req, res) => {
     const materialId = parseInt(req.params.id);
@@ -350,49 +348,66 @@ app.delete('/materials/:id', async (req, res) => {
       res.status(500).json({ error: 'Greška na serveru prilikom brisanja' });
     }
   });
+
+app.patch('/materials/:id/hide', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const m = await Material.findByPk(id);
+    if (!m) return res.status(404).json({ error: 'Materijal nije pronađen' });
+
+    
+    const desired = typeof req.body?.hidden === 'boolean' ? req.body.hidden : !m.isHidden;
+    m.isHidden = desired;
+    await m.save();
+
+    res.json({ ok: true, id: m.id, isHidden: m.isHidden });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Greška pri promjeni vidljivosti.' });
+  }
+});
+
   
 
 
 app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
   try {
+    const { razred } = req.params;
     const raw = req.params.predmet;
-    const p = cleanPredmetParam(raw);
-    const r = normalizeRazred(req.params.razred);
+    const predmet = cleanPredmetParam ? cleanPredmetParam(raw) : raw;
 
-    console.log('[DBG] /materials RAW:', raw, '| CLEAN:', p, '| RAZRED:', r);
+    const baseWhere = {
+      subject: { [Op.iLike]: predmet },
+      razred
+    };
+    if (!shouldIncludeHidden(req)) baseWhere.isHidden = false;
 
-   
-    let where = { subject: { [Op.iLike]: `%${p}%` } };
-    if (r) where.razred = r;
+    let materijali = await Material.findAll({ where: baseWhere });
 
-    let materijali = await Material.findAll({ where });
+    if (!materijali.length) {
+      const likeWhere = {
+        subject: { [Op.iLike]: `%${predmet}%` },
+        razred
+      };
+      if (!shouldIncludeHidden(req)) likeWhere.isHidden = false;
 
- 
-    if (!materijali.length && r) {
-      console.log('[DBG] /materials fallback bez razreda');
-      materijali = await Material.findAll({
-        where: { subject: { [Op.iLike]: `%${p}%` } }
-      });
+      materijali = await Material.findAll({ where: likeWhere });
     }
 
-    console.log('[DBG] /materials found:', materijali.length);
-    const out = materijali.map(m => fixMaterialUrls(m, req));
-    return res.status(200).json(out);
+    const out = materijali.map(m => fixMaterialUrls ? fixMaterialUrls(m, req) : m);
+    res.status(200).json(out);
   } catch (err) {
-    console.error('Greška pri dohvaćanju materijala po predmetu/razredu:', err);
-    return res.status(500).json({ error: 'Greška na serveru.' });
+    console.error('Greška pri dohvaćanju materijala po predmetu i razredu:', err);
+    res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
 
 
 
-
-
-
-
 app.get('/quizzes', async (req, res) => {
   try {
-    const allQuizzes = await Quiz.findAll();
+    const where = shouldIncludeHidden(req) ? {} : { isHidden: false };
+    const allQuizzes = await Quiz.findAll({ where });
     res.status(200).json(allQuizzes);
   } catch (error) {
     console.error('Greška pri dohvaćanju kvizova:', error);
@@ -427,32 +442,31 @@ app.get('/quizzes/:id', async (req, res) => {
 app.get('/quizzes/subject/:predmet', async (req, res) => {
   try {
     const raw = req.params.predmet;
-    const p = cleanPredmetParam(raw);
+    const p = cleanPredmetParam ? cleanPredmetParam(raw) : raw;
 
-    console.log('[DBG] /quizzes RAW:', raw, '| CLEAN:', p);
+    const base = { predmet: { [Op.iLike]: p } };
+    if (!shouldIncludeHidden(req)) base.isHidden = false;
 
-    const kvizovi = await Quiz.findAll({
-      where: { predmet: { [Op.iLike]: `%${p}%` } }
-    });
+    let kvizovi = await Quiz.findAll({ where: base });
 
-    console.log('[DBG] /quizzes found:', kvizovi.length);
+    if (!kvizovi.length) {
+      const likeWhere = { predmet: { [Op.iLike]: `%${p}%` } };
+      if (!shouldIncludeHidden(req)) likeWhere.isHidden = false;
+      kvizovi = await Quiz.findAll({ where: likeWhere });
+    }
 
-    const out = kvizovi.map(k => {
-      let pitanja = k.pitanja;
+    const kvizoviParsed = kvizovi.map(kviz => {
+      let pitanja = kviz.pitanja;
       if (typeof pitanja === 'string') { try { pitanja = JSON.parse(pitanja); } catch { pitanja = []; } }
-      return { ...k.toJSON(), pitanja };
+      return { ...kviz.toJSON(), pitanja };
     });
 
-    return res.json(out);
+    res.json(kvizoviParsed);
   } catch (err) {
-    console.error('🔥 Greška u /quizzes/subject/:predmet:', err);
-    return res.status(500).json({ error: 'Greška na serveru.', detalji: err.message });
+    console.error('🔥 Greska u /quizzes/subject/:predmet:', err);
+    res.status(500).json({ error: 'Greška na serveru.', detalji: err.message });
   }
 });
-
-
-
-
 
 
 app.post('/quizzes', async (req, res) => {
@@ -474,6 +488,26 @@ app.post('/quizzes', async (req, res) => {
     res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
+
+
+app.patch('/quizzes/:id/hide', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const q = await Quiz.findByPk(id);
+    if (!q) return res.status(404).json({ error: 'Kviz nije pronađen.' });
+
+    const desired = typeof req.body?.hidden === 'boolean' ? req.body.hidden : !q.isHidden;
+    q.isHidden = desired;
+    await q.save();
+
+    res.json({ ok: true, id: q.id, isHidden: q.isHidden });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Greška pri promjeni vidljivosti kviza.' });
+  }
+});
+
 //
 app.post('/quizzes/:id/check-answers', async (req, res) => {
   const { odgovori, studentId } = req.body;
@@ -658,25 +692,18 @@ app.get('/quizzes/:quizId/solved/:studentId', async (req, res) => {
 
 
 app.delete('/quizzes/:id', async (req, res) => {
-  const id = req.params.id;
-
+  const id = Number(req.params.id);
   try {
-    
     await SolvedQuiz.destroy({ where: { quizId: id } });
-
-    
     const deleted = await Quiz.destroy({ where: { id } });
-
-    if (deleted) {
-      res.json({ message: 'Kviz obrisan.' });
-    } else {
-      res.status(404).json({ message: 'Kviz nije pronađen.' });
-    }
+    if (deleted) return res.json({ message: 'Kviz obrisan.' });
+    return res.status(404).json({ message: 'Kviz nije pronađen.' });
   } catch (err) {
     console.error('Greška prilikom brisanja kviza:', err);
     res.status(500).json({ message: 'Greška na serveru.' });
   }
 });
+
 
 
 
@@ -1253,6 +1280,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
