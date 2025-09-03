@@ -31,9 +31,16 @@ const Quiz = sequelize.define('Quiz', {
   type: DataTypes.INTEGER,
   allowNull: false,
 },
+
+   isHidden: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
 }, {
   tableName: 'quizzes',
   timestamps: false
 });
 
 module.exports = Quiz;
+
