@@ -36,7 +36,12 @@ const Material = sequelize.define('Material', {
   razred: {
     type: DataTypes.STRING,
     allowNull: false
-  }
+  },
+   isHidden: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
 }, 
 {
   tableName: 'materials',
@@ -44,3 +49,4 @@ const Material = sequelize.define('Material', {
 });
 
 module.exports = Material;
+
