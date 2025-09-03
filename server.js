@@ -50,6 +50,11 @@ function normalizeRazred(r) {
   return String(r).trim();
 }
 
+function shouldIncludeHidden(req) {
+  return req.query.includeHidden === '1' || req.query.includeHidden === 'true';
+}
+
+
 
 async function findBySubject(model, column, rawPredmet, extraWhere = {}) {
   const predmet = cleanPredmetParam(rawPredmet);
@@ -261,14 +266,16 @@ app.post('/login', async (req, res) => {
 
 app.get('/materials', async (req, res) => {
   try {
-    const all = await Material.findAll();
-    const out = all.map(m => fixMaterialUrls(m, req));
+    const where = shouldIncludeHidden(req) ? {} : { isHidden: false };
+    const all = await Material.findAll({ where });
+    const out = all.map(m => fixMaterialUrls ? fixMaterialUrls(m, req) : m);
     res.status(200).json(out);
   } catch (error) {
     console.error('Greška pri dohvaćanju materijala:', error);
     res.status(500).json({ error: 'Greška na serveru prilikom dohvaćanja materijala.' });
   }
 });
+
 
   
 app.post('/materials', async (req, res) => {
@@ -1246,6 +1253,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
