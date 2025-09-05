@@ -510,7 +510,7 @@ app.patch('/quizzes/:id/hide', async (req, res) => {
 
 //
 app.post('/quizzes/:id/check-answers', async (req, res) => {
-  const { odgovori, studentId } = req.body;
+  const { odgovori, studentId, startedAt } = req.body; 
   const quizId = Number(req.params.id);
 
   if (!quizId || isNaN(quizId)) {
@@ -521,18 +521,13 @@ app.post('/quizzes/:id/check-answers', async (req, res) => {
     const quiz = await Quiz.findByPk(quizId);
     if (!quiz) return res.status(404).json({ error: 'Kviz nije pronađen.' });
 
-   
+    
     const result = await sequelize.query(
       `SELECT COUNT(*) FROM "SolvedQuizzes" WHERE studentid = $1 AND quizid = $2`,
-      {
-        bind: [studentId, quizId],
-        type: Sequelize.QueryTypes.SELECT,
-      }
+      { bind: [studentId, quizId], type: Sequelize.QueryTypes.SELECT }
     );
-
     const brojPokusaja = parseInt(result[0].count || '0', 10);
     const maxPokusaja = quiz.maxPokusaja || 1;
-
     if (brojPokusaja >= maxPokusaja) {
       return res.status(403).json({ error: 'Dosegnut je maksimalan broj pokušaja za ovaj kviz.' });
     }
@@ -540,47 +535,71 @@ app.post('/quizzes/:id/check-answers', async (req, res) => {
     
     let pitanja = quiz.pitanja;
     if (typeof pitanja === 'string') {
-      pitanja = JSON.parse(pitanja);
+      try { pitanja = JSON.parse(pitanja); } catch { pitanja = []; }
     }
 
     
-    const rezultat = pitanja.map((p, i) => {
-      const correct = Array.isArray(p.correct) ? [...p.correct].sort() : [p.correct];
-      const user = Array.isArray(odgovori[i]) ? [...odgovori[i]].sort() : [odgovori[i]];
+    const answersDetails = pitanja.map((p, i) => {
+     
+      const correct = p.type === 'multi'
+        ? ([].concat(p.correct || [])).sort()
+        : ([].concat(p.correct)).slice(0,1);
+
+     
+      const user = p.type === 'multi'
+        ? ([].concat(odgovori?.[i] || [])).sort()
+        : ([].concat(odgovori?.[i])).slice(0,1);
+
+      let isCorrect = false;
+
       if (p.type === 'hotspot') {
-    const korisnikovKlik = odgovori[i]; // { x, y }
-    if (!korisnikovKlik || !p.hotspots || p.hotspots.length === 0) return false;
+        const klik = odgovori?.[i]; 
+        if (klik && Array.isArray(p.hotspots)) {
+          isCorrect = p.hotspots.some(h => {
+            const dx = (klik.x - h.x);
+            const dy = (klik.y - h.y);
+            return Math.sqrt(dx*dx + dy*dy) <= h.r;
+          });
+        }
+      } else {
+        isCorrect = JSON.stringify(correct) === JSON.stringify(user);
+      }
 
-    return p.hotspots.some(h => {
-      const dx = korisnikovKlik.x - h.x;
-      const dy = korisnikovKlik.y - h.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      return distance <= h.r;
-    });
-  }
-      return JSON.stringify(correct) === JSON.stringify(user);
+      return {
+        q: i,
+        type: p.type || 'single',
+        chosen: p.type === 'hotspot' ? (odgovori?.[i] || null) : user, 
+        correct,        
+        isCorrect       
+      };
     });
 
-    const tocno = rezultat.filter(Boolean).length;
+    const tocno = answersDetails.filter(a => a.isCorrect).length;
     const ukupno = pitanja.length;
 
    
+    const startTime = startedAt ? new Date(startedAt) : null;
+    const now = new Date();
+    const durationSec = startTime ? Math.max(0, Math.round((now - startTime)/1000)) : null;
+
+    
     await sequelize.query(
-      `INSERT INTO "SolvedQuizzes" (studentid, quizid, result, total, solvedat) VALUES ($1, $2, $3, $4, NOW())`,
+      `INSERT INTO "SolvedQuizzes" 
+       (studentid, quizid, result, total, answers, startedAt, submittedAt, durationSec) 
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW(), $7)`,
       {
-        bind: [studentId, quizId, tocno, ukupno],
+        bind: [studentId, quizId, tocno, ukupno, JSON.stringify(answersDetails), startTime, durationSec],
         type: Sequelize.QueryTypes.INSERT
       }
     );
-   
 
-
-    res.json({ rezultat, tocno, ukupno });
+    res.json({ rezultat: answersDetails.map(a => a.isCorrect), tocno, ukupno, durationSec });
   } catch (error) {
     console.error('Greška pri spremanju rezultata:', error);
     res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
 
 
 app.get('/solved/:studentId/:quizId', async (req, res) => {
@@ -1280,6 +1299,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
