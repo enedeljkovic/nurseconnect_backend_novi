@@ -588,6 +588,127 @@ app.post('/quizzes/:id/check-answers', async (req, res) => {
 
 
 
+app.get('/quizzes/:id/stats-detaljno', async (req, res) => {
+  try {
+    const quizId = Number(req.params.id);
+    if (!quizId || isNaN(quizId)) {
+      return res.status(400).json({ error: 'Nevažeći ID kviza.' });
+    }
+
+    const quiz = await Quiz.findByPk(quizId);
+    if (!quiz) return res.status(404).json({ error: 'Kviz nije pronađen.' });
+
+    
+    let pitanja = quiz.pitanja;
+    if (typeof pitanja === 'string') {
+      try { pitanja = JSON.parse(pitanja); } catch { pitanja = []; }
+    }
+    const N = pitanja.length;
+
+   
+    const rows = await sequelize.query(
+      `SELECT studentid, result, total, answers, per_question, duration_sec, per_question_ms, solvedat
+       FROM "SolvedQuizzes"
+       WHERE quizid = $1
+       ORDER BY solvedat DESC`,
+      { bind: [quizId], type: Sequelize.QueryTypes.SELECT }
+    );
+
+    
+    const perQ = Array.from({ length: N }, () => ({
+      attempts: 0,
+      correct: 0,
+      timeSum: 0,
+      timeCnt: 0,
+      wrongCounts: new Map(), 
+    }));
+
+    let totalAttempts = rows.length;
+    let totalCorrect = 0;
+    let totalQuestions = 0;
+    let durationSum = 0, durationCnt = 0;
+
+    for (const r of rows) {
+      const per = Array.isArray(r.per_question) ? r.per_question : [];
+      const ans = Array.isArray(r.answers) ? r.answers : null; 
+      const times = Array.isArray(r.per_question_ms) ? r.per_question_ms : null;
+
+     
+      const rowCorrect = Number(r.result) || 0;
+      const rowTotal   = Number(r.total)  || per.length || N || 0;
+      totalCorrect += rowCorrect;
+      totalQuestions += rowTotal;
+
+      if (Number.isFinite(r.duration_sec)) { durationSum += Number(r.duration_sec); durationCnt++; }
+
+     
+      for (let i = 0; i < N; i++) {
+        const ok = per[i] === true;
+        perQ[i].attempts += 1;
+        if (ok) perQ[i].correct += 1;
+
+        const t = times && Number(times[i]);
+        if (Number.isFinite(t)) { perQ[i].timeSum += t; perQ[i].timeCnt += 1; }
+
+       
+        const p = pitanja[i] || {};
+        if (!ok && ans && p.type !== 'hotspot') {
+          const a = ans[i];
+         
+          if (Array.isArray(a)) {
+            for (const val of a) {
+              const key = String(val);
+              perQ[i].wrongCounts.set(key, (perQ[i].wrongCounts.get(key) || 0) + 1);
+            }
+          } else if (a !== undefined && a !== null) {
+            const key = String(a);
+            perQ[i].wrongCounts.set(key, (perQ[i].wrongCounts.get(key) || 0) + 1);
+          }
+        }
+      }
+    }
+
+    
+    const questions = perQ.map((q, i) => {
+      const p = pitanja[i] || {};
+      const wrongOptions = Array.from(q.wrongCounts.entries())
+        .sort((a,b) => b[1]-a[1])
+        .map(([option, count]) => ({ option, count }));
+
+      return {
+        index: i,
+        text: p.text || p.question || `Pitanje ${i+1}`,
+        type: p.type || 'unknown',
+        correctOptions: p.correct ?? null,
+        attempts: q.attempts,
+        correctRate: q.attempts ? Math.round((q.correct / q.attempts) * 100) : 0,
+        avgTimeMs: q.timeCnt ? Math.round(q.timeSum / q.timeCnt) : null,
+        topWrong: wrongOptions.slice(0, 5)
+      };
+    });
+
+    const avgScore = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+    const avgDurationSec = durationCnt ? Math.round(durationSum / durationCnt) : null;
+
+    res.json({
+      quiz: { id: quiz.id, naziv: quiz.naziv, razred: quiz.razred, pitanjaCount: N },
+      summary: {
+        attempts: totalAttempts,
+        avgScore,
+        avgDurationSec
+      },
+      questions
+      
+    });
+  } catch (err) {
+    console.error('Greška u /quizzes/:id/stats-detaljno', err);
+    res.status(500).json({ error: 'Greška na serveru.' });
+  }
+});
+
+
+
+
 app.get('/solved/:studentId/:quizId', async (req, res) => {
   const { studentId, quizId } = req.params;
 
@@ -1285,6 +1406,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
