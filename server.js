@@ -510,7 +510,7 @@ app.patch('/quizzes/:id/hide', async (req, res) => {
 
 //
 app.post('/quizzes/:id/check-answers', async (req, res) => {
-  const { odgovori, studentId, startedAt } = req.body; 
+  const { odgovori, studentId, durationSec, perQuestionMs } = req.body; 
   const quizId = Number(req.params.id);
 
   if (!quizId || isNaN(quizId)) {
@@ -532,68 +532,54 @@ app.post('/quizzes/:id/check-answers', async (req, res) => {
       return res.status(403).json({ error: 'Dosegnut je maksimalan broj pokušaja za ovaj kviz.' });
     }
 
-    
+   
     let pitanja = quiz.pitanja;
-    if (typeof pitanja === 'string') {
-      try { pitanja = JSON.parse(pitanja); } catch { pitanja = []; }
-    }
+    if (typeof pitanja === 'string') { pitanja = JSON.parse(pitanja); }
 
-    
-    const answersDetails = pitanja.map((p, i) => {
+   
+    const perQuestion = pitanja.map((p, i) => {
      
-      const correct = p.type === 'multi'
-        ? ([].concat(p.correct || [])).sort()
-        : ([].concat(p.correct)).slice(0,1);
-
-     
-      const user = p.type === 'multi'
-        ? ([].concat(odgovori?.[i] || [])).sort()
-        : ([].concat(odgovori?.[i])).slice(0,1);
-
-      let isCorrect = false;
-
       if (p.type === 'hotspot') {
-        const klik = odgovori?.[i]; 
-        if (klik && Array.isArray(p.hotspots)) {
-          isCorrect = p.hotspots.some(h => {
-            const dx = (klik.x - h.x);
-            const dy = (klik.y - h.y);
-            return Math.sqrt(dx*dx + dy*dy) <= h.r;
-          });
-        }
-      } else {
-        isCorrect = JSON.stringify(correct) === JSON.stringify(user);
+        const klik = odgovori[i]; 
+        if (!klik || !p.hotspots || !p.hotspots.length) return false;
+        return p.hotspots.some(h => {
+          const dx = klik.x - h.x;
+          const dy = klik.y - h.y;
+          return Math.sqrt(dx*dx + dy*dy) <= h.r;
+        });
       }
 
-      return {
-        q: i,
-        type: p.type || 'single',
-        chosen: p.type === 'hotspot' ? (odgovori?.[i] || null) : user, 
-        correct,        
-        isCorrect       
-      };
+      const correct = Array.isArray(p.correct) ? [...p.correct].sort() : [p.correct];
+      const userAns = Array.isArray(odgovori[i]) ? [...odgovori[i]].sort() : [odgovori[i]];
+      return JSON.stringify(correct) === JSON.stringify(userAns);
     });
 
-    const tocno = answersDetails.filter(a => a.isCorrect).length;
+    const tocno = perQuestion.filter(Boolean).length;
     const ukupno = pitanja.length;
 
    
-    const startTime = startedAt ? new Date(startedAt) : null;
-    const now = new Date();
-    const durationSec = startTime ? Math.max(0, Math.round((now - startTime)/1000)) : null;
-
-    
     await sequelize.query(
-      `INSERT INTO "SolvedQuizzes" 
-       (studentid, quizid, result, total, answers, startedAt, submittedAt, durationSec) 
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, NOW(), $7)`,
+      `INSERT INTO "SolvedQuizzes"
+         (studentid, quizid, result, total, solvedat, answers, per_question, duration_sec, per_question_ms)
+       VALUES ($1,$2,$3,$4,NOW(),$5,$6,$7,$8)`,
       {
-        bind: [studentId, quizId, tocno, ukupno, JSON.stringify(answersDetails), startTime, durationSec],
+        bind: [
+          studentId,
+          quizId,
+          tocno,
+          ukupno,
+         
+          JSON.stringify(odgovori ?? null),
+          JSON.stringify(perQuestion),
+          
+          Number.isFinite(durationSec) ? durationSec : null,
+          perQuestionMs ? JSON.stringify(perQuestionMs) : null
+        ],
         type: Sequelize.QueryTypes.INSERT
       }
     );
 
-    res.json({ rezultat: answersDetails.map(a => a.isCorrect), tocno, ukupno, durationSec });
+    res.json({ rezultat: perQuestion, tocno, ukupno });
   } catch (error) {
     console.error('Greška pri spremanju rezultata:', error);
     res.status(500).json({ error: 'Greška na serveru.' });
@@ -1299,6 +1285,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
