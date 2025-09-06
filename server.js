@@ -640,6 +640,73 @@ app.get('/quizzes/:id/stats-detaljno', async (req, res) => {
 });
 
 
+app.post('/quizzes/:id/check-answers', async (req, res) => {
+  const quizId = Number(req.params.id);
+  const { odgovori, studentId, durationSec, perQuestionMs } = req.body;
+
+  if (!Number.isFinite(quizId) || !Number.isFinite(Number(studentId))) {
+    return res.status(400).json({ error: 'Loši parametri.' });
+  }
+
+  try {
+    const quiz = await Quiz.findByPk(quizId);
+    if (!quiz) return res.status(404).json({ error: 'Kviz nije pronađen.' });
+
+    const tries = await sequelize.query(
+      `SELECT COUNT(*) FROM "SolvedQuizzes" WHERE studentid = $1 AND quizid = $2`,
+      { bind: [studentId, quizId], type: Sequelize.QueryTypes.SELECT }
+    );
+    const count = parseInt(tries[0].count || '0', 10);
+    const maxPokusaja = quiz.maxPokusaja || 1;
+    if (count >= maxPokusaja) {
+      return res.status(403).json({ error: 'Dosegnut je maksimalan broj pokušaja.' });
+    }
+
+    let pitanja = quiz.pitanja;
+    if (typeof pitanja === 'string') { try { pitanja = JSON.parse(pitanja); } catch { pitanja = []; } }
+
+    const perQuestion = pitanja.map((p, i) => {
+      if (p.type === 'hotspot') {
+        const klik = odgovori?.[i];
+        if (!klik || !p.hotspots?.length) return false;
+        return p.hotspots.some(h => {
+          const dx = klik.x - h.x, dy = klik.y - h.y;
+          return Math.sqrt(dx*dx + dy*dy) <= h.r;
+        });
+      }
+      const correct = Array.isArray(p.correct) ? [...p.correct].sort() : [p.correct];
+      const userAns = Array.isArray(odgovori?.[i]) ? [...odgovori[i]].sort() : [odgovori?.[i]];
+      return JSON.stringify(correct) === JSON.stringify(userAns);
+    });
+
+    const tocno = perQuestion.filter(Boolean).length;
+    const ukupno = pitanja.length;
+
+    await sequelize.query(
+      `INSERT INTO "SolvedQuizzes"
+         (studentid, quizid, result, total, solvedat, answers, per_question, duration_sec, per_question_ms)
+       VALUES ($1,$2,$3,$4,NOW(),$5,$6,$7,$8)`,
+      {
+        bind: [
+          studentId,
+          quizId,
+          tocno,
+          ukupno,
+          JSON.stringify(odgovori ?? null),
+          JSON.stringify(perQuestion),
+          Number.isFinite(durationSec) ? durationSec : null,
+          perQuestionMs ? JSON.stringify(perQuestionMs) : null
+        ],
+        type: Sequelize.QueryTypes.INSERT
+      }
+    );
+
+    res.json({ rezultat: perQuestion, tocno, ukupno });
+  } catch (err) {
+    console.error('Greška pri check-answers:', err);
+    res.status(500).json({ error: 'Greška na serveru.' });
+  }
+});
 
 //
 
@@ -1310,6 +1377,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
