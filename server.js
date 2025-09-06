@@ -509,85 +509,6 @@ app.patch('/quizzes/:id/hide', async (req, res) => {
 });
 
 //
-app.post('/quizzes/:id/check-answers', async (req, res) => {
-  const { odgovori, studentId, durationSec, perQuestionMs } = req.body; 
-  const quizId = Number(req.params.id);
-
-  if (!quizId || isNaN(quizId)) {
-    return res.status(400).json({ error: 'Nevažeći ID kviza.' });
-  }
-
-  try {
-    const quiz = await Quiz.findByPk(quizId);
-    if (!quiz) return res.status(404).json({ error: 'Kviz nije pronađen.' });
-
-    
-    const result = await sequelize.query(
-      `SELECT COUNT(*) FROM "SolvedQuizzes" WHERE studentid = $1 AND quizid = $2`,
-      { bind: [studentId, quizId], type: Sequelize.QueryTypes.SELECT }
-    );
-    const brojPokusaja = parseInt(result[0].count || '0', 10);
-    const maxPokusaja = quiz.maxPokusaja || 1;
-    if (brojPokusaja >= maxPokusaja) {
-      return res.status(403).json({ error: 'Dosegnut je maksimalan broj pokušaja za ovaj kviz.' });
-    }
-
-   
-    let pitanja = quiz.pitanja;
-    if (typeof pitanja === 'string') { pitanja = JSON.parse(pitanja); }
-
-   
-    const perQuestion = pitanja.map((p, i) => {
-     
-      if (p.type === 'hotspot') {
-        const klik = odgovori[i]; 
-        if (!klik || !p.hotspots || !p.hotspots.length) return false;
-        return p.hotspots.some(h => {
-          const dx = klik.x - h.x;
-          const dy = klik.y - h.y;
-          return Math.sqrt(dx*dx + dy*dy) <= h.r;
-        });
-      }
-
-      const correct = Array.isArray(p.correct) ? [...p.correct].sort() : [p.correct];
-      const userAns = Array.isArray(odgovori[i]) ? [...odgovori[i]].sort() : [odgovori[i]];
-      return JSON.stringify(correct) === JSON.stringify(userAns);
-    });
-
-    const tocno = perQuestion.filter(Boolean).length;
-    const ukupno = pitanja.length;
-
-   
-    await sequelize.query(
-      `INSERT INTO "SolvedQuizzes"
-         (studentid, quizid, result, total, solvedat, answers, per_question, duration_sec, per_question_ms)
-       VALUES ($1,$2,$3,$4,NOW(),$5,$6,$7,$8)`,
-      {
-        bind: [
-          studentId,
-          quizId,
-          tocno,
-          ukupno,
-         
-          JSON.stringify(odgovori ?? null),
-          JSON.stringify(perQuestion),
-          
-          Number.isFinite(durationSec) ? durationSec : null,
-          perQuestionMs ? JSON.stringify(perQuestionMs) : null
-        ],
-        type: Sequelize.QueryTypes.INSERT
-      }
-    );
-
-    res.json({ rezultat: perQuestion, tocno, ukupno });
-  } catch (error) {
-    console.error('Greška pri spremanju rezultata:', error);
-    res.status(500).json({ error: 'Greška na serveru.' });
-  }
-});
-
-
-
 app.get('/quizzes/:id/stats-detaljno', async (req, res) => {
   try {
     const quizId = Number(req.params.id);
@@ -598,50 +519,64 @@ app.get('/quizzes/:id/stats-detaljno', async (req, res) => {
     const quiz = await Quiz.findByPk(quizId);
     if (!quiz) return res.status(404).json({ error: 'Kviz nije pronađen.' });
 
-    
+   
     let pitanja = quiz.pitanja;
     if (typeof pitanja === 'string') {
       try { pitanja = JSON.parse(pitanja); } catch { pitanja = []; }
     }
-    const N = pitanja.length;
+    const N = Array.isArray(pitanja) ? pitanja.length : 0;
+
+    
+    const safeParse = (v, defVal) => {
+      if (Array.isArray(v)) return v;
+      if (typeof v === 'string') { try { return JSON.parse(v); } catch { return defVal; } }
+      return defVal;
+    };
 
    
     const rows = await sequelize.query(
       `SELECT studentid, result, total, answers, per_question, duration_sec, per_question_ms, solvedat
-       FROM "SolvedQuizzes"
-       WHERE quizid = $1
-       ORDER BY solvedat DESC`,
+         FROM "SolvedQuizzes"
+        WHERE quizid = $1
+        ORDER BY solvedat DESC`,
       { bind: [quizId], type: Sequelize.QueryTypes.SELECT }
     );
 
-    
     const perQ = Array.from({ length: N }, () => ({
       attempts: 0,
       correct: 0,
       timeSum: 0,
       timeCnt: 0,
-      wrongCounts: new Map(), 
+      wrongCounts: new Map(),
     }));
 
     let totalAttempts = rows.length;
     let totalCorrect = 0;
     let totalQuestions = 0;
-    let durationSum = 0, durationCnt = 0;
+    let durationSum = 0;
+    let durationCnt = 0;
 
     for (const r of rows) {
-      const per = Array.isArray(r.per_question) ? r.per_question : [];
-      const ans = Array.isArray(r.answers) ? r.answers : null; 
-      const times = Array.isArray(r.per_question_ms) ? r.per_question_ms : null;
+      
+      const per   = safeParse(r.per_question,    []);
+      const ans   = safeParse(r.answers,         null);
+      const times = safeParse(r.per_question_ms, null);
 
-     
       const rowCorrect = Number(r.result) || 0;
       const rowTotal   = Number(r.total)  || per.length || N || 0;
-      totalCorrect += rowCorrect;
+      totalCorrect  += rowCorrect;
       totalQuestions += rowTotal;
 
-      if (Number.isFinite(r.duration_sec)) { durationSum += Number(r.duration_sec); durationCnt++; }
-
      
+      const dur = (r.duration_sec === null || r.duration_sec === undefined)
+        ? null
+        : Number(r.duration_sec);
+      if (Number.isFinite(dur)) {
+        durationSum += dur;
+        durationCnt += 1;
+      }
+
+      
       for (let i = 0; i < N; i++) {
         const ok = per[i] === true;
         perQ[i].attempts += 1;
@@ -650,11 +585,10 @@ app.get('/quizzes/:id/stats-detaljno', async (req, res) => {
         const t = times && Number(times[i]);
         if (Number.isFinite(t)) { perQ[i].timeSum += t; perQ[i].timeCnt += 1; }
 
-       
         const p = pitanja[i] || {};
+       
         if (!ok && ans && p.type !== 'hotspot') {
           const a = ans[i];
-         
           if (Array.isArray(a)) {
             for (const val of a) {
               const key = String(val);
@@ -668,22 +602,22 @@ app.get('/quizzes/:id/stats-detaljno', async (req, res) => {
       }
     }
 
-    
+   
     const questions = perQ.map((q, i) => {
       const p = pitanja[i] || {};
       const wrongOptions = Array.from(q.wrongCounts.entries())
-        .sort((a,b) => b[1]-a[1])
+        .sort((a, b) => b[1] - a[1])
         .map(([option, count]) => ({ option, count }));
 
       return {
         index: i,
-        text: p.text || p.question || `Pitanje ${i+1}`,
+        text: p.text || p.question || `Pitanje ${i + 1}`,
         type: p.type || 'unknown',
         correctOptions: p.correct ?? null,
         attempts: q.attempts,
         correctRate: q.attempts ? Math.round((q.correct / q.attempts) * 100) : 0,
         avgTimeMs: q.timeCnt ? Math.round(q.timeSum / q.timeCnt) : null,
-        topWrong: wrongOptions.slice(0, 5)
+        topWrong: wrongOptions.slice(0, 5),
       };
     });
 
@@ -698,42 +632,12 @@ app.get('/quizzes/:id/stats-detaljno', async (req, res) => {
         avgDurationSec
       },
       questions
-      
     });
   } catch (err) {
     console.error('Greška u /quizzes/:id/stats-detaljno', err);
     res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
-
-
-
-
-app.get('/solved/:studentId/:quizId', async (req, res) => {
-  const { studentId, quizId } = req.params;
-
-  try {
-    const result = await sequelize.query(
-      `SELECT result, total FROM "SolvedQuizzes" WHERE studentid = $1 AND quizid = $2 LIMIT 1`,
-      {
-        bind: [studentId, quizId],
-        type: Sequelize.QueryTypes.SELECT,
-      }
-    );
-
-    if (result.length > 0) {
-      const { result: tocno, total } = result[0];
-      const rezultat = Array.from({ length: total }, (_, i) => i < tocno);
-      return res.json({ solved: true, rezultat });
-    } else {
-      return res.json({ solved: false });
-    }
-  } catch (err) {
-    console.error('Greška pri provjeri rješenja:', err);
-    res.status(500).json({ error: 'Greška na serveru.' });
-  }
-});
-
 
 
 
@@ -1406,6 +1310,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
