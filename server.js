@@ -226,6 +226,7 @@ app.post('/students', async (req, res) => {
 
 
 
+
 app.delete('/students/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
@@ -234,19 +235,19 @@ app.delete('/students/:id', async (req, res) => {
 
   const t = await sequelize.transaction();
   try {
-    
+   
     await ReadMaterial.destroy({
       where: { [Op.or]: [{ studentid: id }, { studentId: id }] },
       transaction: t,
     });
 
-   
     await SolvedQuiz.destroy({
       where: { [Op.or]: [{ studentid: id }, { studentId: id }] },
       transaction: t,
     });
 
-    
+   
+  
     const deleted = await Student.destroy({ where: { id }, transaction: t });
 
     await t.commit();
@@ -259,6 +260,7 @@ app.delete('/students/:id', async (req, res) => {
     return res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
 
 
 
@@ -1397,6 +1399,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
