@@ -168,44 +168,6 @@ sequelize.sync()
   .then(() => console.log('Baza podataka je sinkronizirana!'))
   .catch((error) => console.error('Greška pri sinkronizaciji baze:', error));
 
-//
-// ====== ALIASI zbog starog frontenda koji zove /api/v1/... ======
-
-// /api/v1/quizzes  →  /quizzes
-app.all('/api/v1/quizzes', (req, res) => {
-  res.redirect(307, req.originalUrl.replace(/^\/api\/v1/, ''));
-});
-
-// /api/v1/quizzes/:id  →  /quizzes/:id
-app.all('/api/v1/quizzes/:id', (req, res) => {
-  res.redirect(307, req.originalUrl.replace(/^\/api\/v1/, ''));
-});
-
-// /api/v1/quizzes/:id/check-answers  →  /quizzes/:id/check-answers
-app.all('/api/v1/quizzes/:id/check-answers', (req, res) => {
-  res.redirect(307, req.originalUrl.replace(/^\/api\/v1/, ''));
-});
-
-// /api/v1/quizzes/:quizId/solved/:studentId  →  /quizzes/:quizId/solved/:studentId
-app.all('/api/v1/quizzes/:quizId/solved/:studentId', (req, res) => {
-  res.redirect(307, req.originalUrl.replace(/^\/api\/v1/, ''));
-});
-
-// Stara ruta koju frontend ponekad zove: /solved/:studentId/:quizId  → nova /quizzes/:quizId/solved/:studentId
-app.get('/solved/:studentId/:quizId', (req, res) => {
-  const { studentId, quizId } = req.params;
-  res.redirect(307, `/quizzes/${quizId}/solved/${studentId}`);
-});
-
-//
-
-
-
-
-
-
-
-
 
 
 
@@ -265,19 +227,39 @@ app.post('/students', async (req, res) => {
 
 
 app.delete('/students/:id', async (req, res) => {
-  const studentId = req.params.id;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Neispravan ID (mora biti broj).' });
+  }
+
+  const t = await sequelize.transaction();
   try {
-    const deleted = await Student.destroy({ where: { id: studentId } });
-    if (deleted) {
-      res.status(200).json({ message: 'Student obrisan.' });
-    } else {
-      res.status(404).json({ error: 'Student nije pronađen.' });
-    }
+    
+    await ReadMaterial.destroy({
+      where: { [Op.or]: [{ studentid: id }, { studentId: id }] },
+      transaction: t,
+    });
+
+   
+    await SolvedQuiz.destroy({
+      where: { [Op.or]: [{ studentid: id }, { studentId: id }] },
+      transaction: t,
+    });
+
+    
+    const deleted = await Student.destroy({ where: { id }, transaction: t });
+
+    await t.commit();
+
+    if (!deleted) return res.status(404).json({ error: 'Student nije pronađen.' });
+    return res.json({ message: 'Student obrisan.' });
   } catch (err) {
+    await t.rollback();
     console.error('Greška pri brisanju studenta:', err);
-    res.status(500).json({ error: 'Greška na serveru.' });
+    return res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
 
 
 app.post('/login', async (req, res) => {
@@ -1415,6 +1397,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
