@@ -547,42 +547,50 @@ app.get('/download/material/:id', async (req, res) => {
     const m = await Material.findByPk(id);
     if (!m || !m.fileUrl) return res.status(404).json({ error: 'Materijal nije pronađen' });
 
-    
+    // željeno ime (sigurno) + ekstenzija (pokušaj iz URL-a)
     let desired = (m.naziv || 'datoteka').toString().replace(/[^\w.-]+/g, '_');
-    
+    let ext = '';
     try {
-      const u = new URL(m.fileUrl);
-      const p = u.pathname;
-      const extMatch = p.match(/\.(pdf|pptx?|docx?|xlsx?|zip|png|jpe?g|gif)$/i);
-      if (extMatch) desired += extMatch[0].toLowerCase();
+      const p = new URL(m.fileUrl, `${req.protocol}://${req.get('host')}`).pathname;
+      const mm = p.match(/\.(pdf|pptx?|docx?|xlsx?|zip|png|jpe?g|gif)$/i);
+      if (mm) ext = mm[0].toLowerCase();
     } catch { /* ignore */ }
+    const desiredFile = desired + ext;
 
-    
-    if (/\/uploads\//.test(m.fileUrl) && !/^https?:\/\//i.test(m.fileUrl)) {
+    // 1) LOKALNI FAJL (naš /uploads) -> direktno download
+    const isAbsolute = /^https?:\/\//i.test(m.fileUrl);
+    const isLocalUploads = /\/uploads\//.test(m.fileUrl);
+    if (isLocalUploads && !isAbsolute) {
       const stored = decodeURIComponent(m.fileUrl.split('/uploads/')[1] || '');
       const full = path.join(__dirname, 'uploads', stored);
-      return res.download(full, desired);
+      return res.download(full, desiredFile);
     }
-
-    
-    if (/\/uploads\//.test(m.fileUrl) && /^https?:\/\//i.test(m.fileUrl)) {
+    if (isLocalUploads && isAbsolute) {
       const stored = decodeURIComponent((new URL(m.fileUrl)).pathname.split('/uploads/')[1] || '');
       const full = path.join(__dirname, 'uploads', stored);
-      return res.download(full, desired);
+      return res.download(full, desiredFile);
     }
 
-    const r = await fetch(m.fileUrl);
-    if (!r.ok) return res.status(502).json({ error: 'Ne mogu dohvatiti datoteku.' });
+    // 2) CLOUDINARY -> redirect na "fl_attachment:<ime.ext>"
+    if (/res\.cloudinary\.com/i.test(m.fileUrl)) {
+      const u = new URL(m.fileUrl);
+      // ubaci /fl_attachment:<ime.ext>/ odmah poslije /upload/
+      u.pathname = u.pathname.replace(
+        /\/upload\/(?!fl_attachment)/,
+        `/upload/fl_attachment:${encodeURIComponent(desiredFile)}/`
+      );
+      return res.redirect(302, u.toString());
+    }
 
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${desired}"`);
- 
-    r.body.pipe(res);
+    // 3) BILO KOJI DRUGI VANJSKI URL -> samo redirect (ime možda neće biti savršeno)
+    return res.redirect(302, m.fileUrl);
+
   } catch (e) {
     console.error('Download error:', e);
     res.status(500).json({ error: 'Greška pri preuzimanju.' });
   }
 });
+
 
 
 app.get('/quizzes', async (req, res) => {
@@ -1552,6 +1560,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
