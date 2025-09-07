@@ -154,38 +154,73 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 const uploadMemory = multer({ storage: multer.memoryStorage() });
+const CLOUDINARY_MAX = 10 * 1024 * 1024;
 
 app.post('/upload', uploadMemory.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nema datoteke' });
 
-    const folder = process.env.CLOUDINARY_FOLDER || 'uploads';
+    const origName = req.file.originalname || 'file';
+    const baseName = path.parse(origName).name.replace(/[^\w.-]+/g, '_'); 
+    const ext      = path.extname(origName) || '';                       
+    const folder   = process.env.CLOUDINARY_FOLDER || 'uploads';
+
+  
+    if (req.file.size > CLOUDINARY_MAX) {
+      const safeStored = (Date.now() + '-' + origName).replace(/[^\w.-]+/g, '_');
+      const dest = path.join(__dirname, 'uploads', safeStored);
+      await fs.promises.writeFile(dest, req.file.buffer);
+
+      const base = `${req.protocol}://${req.get('host')}`;
+      const downloadUrl = `${base}/download/local/${encodeURIComponent(safeStored)}?name=${encodeURIComponent(origName)}`;
+
+      return res.json({
+        fileUrl: `${base}/uploads/${encodeURIComponent(safeStored)}`, 
+        downloadUrl,                                                  
+        publicId: null,
+        storage: 'local'
+      });
+    }
+
+    
+    const publicId = `${folder}/${baseName}-${Date.now()}`;
 
     const stream = cloudinary.uploader.upload_stream(
       {
-        resource_type: 'raw',     
-        folder,
-        use_filename: true,
-        unique_filename: true,
+        resource_type: 'raw',
+        public_id: publicId,
+        use_filename: false,
+        unique_filename: false,
         overwrite: false,
       },
       (err, data) => {
         if (err) {
           console.error('Cloudinary upload error:', err);
-          return res.status(500).json({ error: 'Upload nije uspio' });
+          return res.status(500).json({ error: 'Upload nije uspio.' });
         }
+
        
-        res.json({ fileUrl: data.secure_url, publicId: data.public_id });
+        const desiredName = `${baseName}${ext}`;
+        const downloadUrl = data.secure_url.replace(
+          '/upload/',
+          `/upload/fl_attachment:${encodeURIComponent(desiredName)}/`
+        );
+
+        return res.json({
+          fileUrl: data.secure_url,  
+          downloadUrl,               
+          publicId: data.public_id,
+          storage: 'cloudinary'
+        });
       }
     );
 
     stream.end(req.file.buffer);
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: 'Upload nije uspio' });
+    res.status(500).json({ error: 'Upload nije uspio.' });
   }
 });
-
 
 
 
@@ -491,6 +526,20 @@ app.get('/materials/subject/:predmet/razred/:razred', async (req, res) => {
     res.status(500).json({ error: 'Greška na serveru.' });
   }
 });
+
+
+app.get('/download/local/:stored', async (req, res) => {
+  try {
+    const stored = req.params.stored;
+    const desired = req.query.name || stored; 
+    const filePath = path.join(__dirname, 'uploads', stored);
+    return res.download(filePath, desired);   
+  } catch (e) {
+    console.error('Local download error:', e);
+    return res.status(404).json({ error: 'Datoteka nije pronađena.' });
+  }
+});
+
 
 
 
@@ -1461,6 +1510,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
