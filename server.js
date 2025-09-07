@@ -14,7 +14,6 @@ const Message = require('./Models/message');
 const { Op } = require('sequelize');
 const Sequelize = require('sequelize');
 
-// Cloudinary config
 const { v2: cloudinary } = require('cloudinary');
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -22,21 +21,84 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+
+
+
+function getBaseFromReq(req) {
+  
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+
+function fixUrl(url, req) {
+  if (!url) return url;
+  const base = getBaseFromReq(req);
+  return url.replace(/^https?:\/\/localhost:\d+/i, base);
+}
+
+
+function fixMaterialUrls(material, req) {
+  if (!material) return material;
+  const m = material.toJSON ? material.toJSON() : { ...material };
+  m.fileUrl  = fixUrl(m.fileUrl, req);
+  m.imageUrl = fixUrl(m.imageUrl, req);
+  return m;
+}
+
+
+function cleanPredmetParam(p) {
+  if (!p) return p;
+  try { p = decodeURIComponent(p); } catch {}
+ 
+  return p.replace(/\s*\(.*?\)\s*$/i, '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeRazred(r) {
+  if (r === undefined || r === null) return null;
+  return String(r).trim();
+}
+
+function shouldIncludeHidden(req) {
+  return req.query.includeHidden === '1' || req.query.includeHidden === 'true';
+}
+
+
+
+async function findBySubject(model, column, rawPredmet, extraWhere = {}) {
+  const predmet = cleanPredmetParam(rawPredmet);
+  const whereBase = { ...extraWhere };
+
+
+  let rows = await model.findAll({ where: { ...whereBase, [column]: { [Op.iLike]: predmet } } });
+  if (rows.length) return rows;
+
+ 
+  rows = await model.findAll({ where: { ...whereBase, [column]: { [Op.iLike]: `%${predmet}%` } } });
+  if (rows.length) return rows;
+
+  
+  const words = predmet.split(' ').filter(Boolean);
+  const andConds = words.map(w => ({ [column]: { [Op.iLike]: `%${w}%` } }));
+  rows = await model.findAll({ where: { ...whereBase, [Op.and]: andConds } });
+  return rows;
+}
+
+
+
 const Student = require('./Models/student');
 const Material = require('./Models/material');
 const Quiz = require('./Models/quiz');
 const Admin = require('./Models/admin');
 
-const app = express();                     // ⬅️ prvo kreiraj app
+const app = express();
 app.set('trust proxy', 1);
 const port = 3001;
-
-// CORS
 const cors = require('cors');
 const allowedOrigins = [
   'http://localhost:5173',
   'https://nurseconnect-pula.netlify.app' 
 ];
+
 const corsOptions = {
   origin(origin, cb) {
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
@@ -46,7 +108,11 @@ const corsOptions = {
   methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization']
 };
+
+
 app.use(cors(corsOptions));
+
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
@@ -56,6 +122,8 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+
 app.options('*', (req, res) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {
@@ -66,38 +134,36 @@ app.options('*', (req, res) => {
   }
   res.sendStatus(204);
 });
+
+
 app.use(express.json({ limit: '10mb' })); 
 
-// statika za stare lokalne uploade (može ostati)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Multer (disk) – stari način (ostavi ako ti treba negdje)
+app.use('/', express.static(path.join(__dirname, '')));
+ 
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  destination: (req, file, cb) => {
+    cb(null, '/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = Date.now() + '-' + file.originalname;
+    cb(null, uniqueName);
+  }
 });
-const upload = multer({ storage });
 
-// Multer (memory) – za Cloudinary
+const upload = multer({ storage });
 const uploadMemory = multer({ storage: multer.memoryStorage() });
 
-// ----- API v1 aliasi (SADA OVDJE, nakon što app postoji) -----
-app.get('/api/v1/materials', (req, res, next) => { req.url = '/materials' + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''); next(); });
-app.get('/api/v1/materials/subject/:predmet/razred/:razred', (req, res, next) => { req.url = `/materials/subject/${req.params.predmet}/razred/${req.params.razred}`; next(); });
-app.patch('/api/v1/materials/:id/hide', (req, res, next) => { req.url = `/materials/${req.params.id}/hide`; next(); });
-app.put('/api/v1/materials/:id', (req, res, next) => { req.url = `/materials/${req.params.id}`; next(); });
-app.delete('/api/v1/materials/:id', (req, res, next) => { req.url = `/materials/${req.params.id}`; next(); });
-app.post('/api/v1/upload', (req, res, next) => { req.url = '/upload'; next(); });
-// --------------------------------------------------------------
-
-// Cloudinary upload ruta
 app.post('/upload', uploadMemory.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nema datoteke' });
+
     const folder = process.env.CLOUDINARY_FOLDER || 'uploads';
+
     const stream = cloudinary.uploader.upload_stream(
       {
-        resource_type: 'raw',
+        resource_type: 'raw',     
         folder,
         use_filename: true,
         unique_filename: true,
@@ -108,15 +174,42 @@ app.post('/upload', uploadMemory.single('file'), async (req, res) => {
           console.error('Cloudinary upload error:', err);
           return res.status(500).json({ error: 'Upload nije uspio' });
         }
+       
         res.json({ fileUrl: data.secure_url, publicId: data.public_id });
       }
     );
+
     stream.end(req.file.buffer);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Upload nije uspio' });
   }
 });
+
+
+
+
+let students = [];
+let materials = []; 
+let quizzes = []; 
+
+function generateKey() {
+    return crypto.randomBytes(8).toString('hex');
+}
+
+Profesor.associate({ Subject });
+Subject.associate({ Profesor });
+
+Student.hasMany(SolvedQuiz);
+SolvedQuiz.belongsTo(Student);
+Quiz.hasMany(SolvedQuiz);
+SolvedQuiz.belongsTo(Quiz);
+
+
+sequelize.sync()
+  .then(() => console.log('Baza podataka je sinkronizirana!'))
+  .catch((error) => console.error('Greška pri sinkronizaciji baze:', error));
+
 
 
 
@@ -1374,6 +1467,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
