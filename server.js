@@ -13,7 +13,7 @@ const ReadMaterial = require('./Models/ReadMaterial');
 const Message = require('./Models/message');
 const { Op } = require('sequelize');
 const Sequelize = require('sequelize');
-const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+const { Readable } = require('stream');
 
 const { v2: cloudinary } = require('cloudinary');
 cloudinary.config({
@@ -1552,6 +1552,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
