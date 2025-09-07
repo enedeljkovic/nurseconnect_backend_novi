@@ -13,6 +13,25 @@ const ReadMaterial = require('./Models/ReadMaterial');
 const Message = require('./Models/message');
 const { Op } = require('sequelize');
 const Sequelize = require('sequelize');
+const { v2: cloudinary } = require('cloudinary');
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+
+
+
+
+app.get('/api/v1/materials', (req, res, next) => { req.url = '/materials' + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''); next(); });
+app.get('/api/v1/materials/subject/:predmet/razred/:razred', (req, res, next) => { req.url = `/materials/subject/${req.params.predmet}/razred/${req.params.razred}`; next(); });
+app.patch('/api/v1/materials/:id/hide', (req, res, next) => { req.url = `/materials/${req.params.id}/hide`; next(); });
+app.put('/api/v1/materials/:id', (req, res, next) => { req.url = `/materials/${req.params.id}`; next(); });
+app.delete('/api/v1/materials/:id', (req, res, next) => { req.url = `/materials/${req.params.id}`; next(); });
+app.post('/api/v1/upload', (req, res, next) => { req.url = '/upload'; next(); });
+
+
 
 
 
@@ -145,6 +164,7 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+const uploadMemory = multer({ storage: multer.memoryStorage() });
 
 
 let students = [];
@@ -329,21 +349,28 @@ app.post('/materials', async (req, res) => {
 
 app.put('/materials/:id', async (req, res) => {
   const materialId = Number(req.params.id);
-  const { naziv, opis, imageUrl, fileUrl, subject, razred } = req.body;
+  const { naziv, opis, imageUrl, fileUrl, subject, razred, cloudinaryPublicId } = req.body;
 
   try {
     const material = await Material.findByPk(materialId);
     if (!material) return res.status(404).json({ error: 'Materijal nije pronađen' });
 
-    await material.update({
+    
+    const payload = {
       naziv,
       opis,
       imageUrl: imageUrl ?? null,
       fileUrl:  fileUrl  ?? null,
       subject:  subject  ?? material.subject,
-      razred:   razred   ?? material.razred
-    });
+      razred:   razred   ?? material.razred,
+    };
 
+    
+    if (typeof cloudinaryPublicId === 'string') {
+      payload.cloudinaryPublicId = cloudinaryPublicId;
+    }
+
+    await material.update(payload);
     res.status(200).json(material);
   } catch (error) {
     console.error('Greška pri ažuriranju materijala:', error);
@@ -352,24 +379,41 @@ app.put('/materials/:id', async (req, res) => {
 });
 
 app.delete('/materials/:id', async (req, res) => {
-    const materialId = parseInt(req.params.id);
-  
-    try {
-      const material = await Material.findByPk(materialId);
-  
-      if (!material) {
-        return res.status(404).json({ error: 'Materijal nije pronađen' });
-      }
-  
-      await material.destroy();
-  
-      console.log(`✔️ Materijal s ID-em ${materialId} je obrisan iz baze.`);
-      res.status(204).send();
-    } catch (error) {
-      console.error('❌ Greška pri brisanju materijala:', error);
-      res.status(500).json({ error: 'Greška na serveru prilikom brisanja' });
+  const materialId = parseInt(req.params.id);
+
+  try {
+    const material = await Material.findByPk(materialId);
+    if (!material) {
+      return res.status(404).json({ error: 'Materijal nije pronađen' });
     }
-  });
+
+    
+    try {
+      await ReadMaterial.destroy({ where: { materialid: materialId } }); 
+    } catch (e) {
+      console.warn('ReadMaterial cleanup warn:', e?.message);
+    }
+
+    
+    if (material.cloudinaryPublicId) {
+      try {
+        await cloudinary.uploader.destroy(material.cloudinaryPublicId, { resource_type: 'raw' });
+      } catch (e) {
+        console.warn('Cloudinary delete warn:', e?.message);
+      }
+    }
+
+   
+    await material.destroy();
+
+    console.log(`✔️ Materijal #${materialId} obrisan.`);
+    res.status(204).send();
+  } catch (error) {
+    console.error('❌ Greška pri brisanju materijala:', error);
+    res.status(500).json({ error: 'Greška na serveru prilikom brisanja' });
+  }
+});
+
 
 app.patch('/materials/:id/hide', async (req, res) => {
   try {
@@ -377,8 +421,12 @@ app.patch('/materials/:id/hide', async (req, res) => {
     const m = await Material.findByPk(id);
     if (!m) return res.status(404).json({ error: 'Materijal nije pronađen' });
 
-    
-    const desired = typeof req.body?.hidden === 'boolean' ? req.body.hidden : !m.isHidden;
+   
+    const body = req.body || {};
+    const desired =
+      typeof body.isHidden === 'boolean' ? body.isHidden :
+      (typeof body.hidden === 'boolean' ? body.hidden : !m.isHidden);
+
     m.isHidden = desired;
     await m.save();
 
@@ -956,14 +1004,36 @@ app.get('/subjects', async (req, res) => {
 
 
 
-app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'Datoteka nije poslana.' });
+app.post('/upload', uploadMemory.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nema datoteke' });
+    const folder = process.env.CLOUDINARY_FOLDER || 'uploads';
+
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'raw',       
+        folder,
+        use_filename: true,
+        unique_filename: true,
+        overwrite: false,
+      },
+      (err, data) => {
+        if (err) {
+          console.error('Cloudinary upload error:', err);
+          return res.status(500).json({ error: 'Upload nije uspio' });
+        }
+        
+        res.json({ fileUrl: data.secure_url, publicId: data.public_id });
+      }
+    );
+
+    stream.end(req.file.buffer);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Upload nije uspio' });
   }
-  const baseUrl = `${req.protocol}://${req.get('host')}`; 
-  const fileUrl = `${baseUrl}/uploads/${encodeURIComponent(req.file.filename)}`;
-  return res.status(200).json({ fileUrl });
 });
+
 
   
 
@@ -1399,6 +1469,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
