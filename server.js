@@ -381,28 +381,24 @@ app.put('/materials/:id', async (req, res) => {
     const material = await Material.findByPk(materialId);
     if (!material) return res.status(404).json({ error: 'Materijal nije pronađen' });
 
-    
-    const payload = {
+    await material.update({
       naziv,
       opis,
       imageUrl: imageUrl ?? null,
       fileUrl:  fileUrl  ?? null,
       subject:  subject  ?? material.subject,
       razred:   razred   ?? material.razred,
-    };
+     
+      ...(typeof cloudinaryPublicId === 'string' ? { cloudinaryPublicId } : {})
+    });
 
-    
-    if (typeof cloudinaryPublicId === 'string') {
-      payload.cloudinaryPublicId = cloudinaryPublicId;
-    }
-
-    await material.update(payload);
     res.status(200).json(material);
   } catch (error) {
     console.error('Greška pri ažuriranju materijala:', error);
     res.status(500).json({ error: 'Greška pri ažuriranju materijala' });
   }
 });
+
 
 app.delete('/materials/:id', async (req, res) => {
   const materialId = parseInt(req.params.id);
@@ -413,7 +409,7 @@ app.delete('/materials/:id', async (req, res) => {
       return res.status(404).json({ error: 'Materijal nije pronađen' });
     }
 
-    
+  
     try {
       await ReadMaterial.destroy({ where: { materialid: materialId } }); 
     } catch (e) {
@@ -429,10 +425,7 @@ app.delete('/materials/:id', async (req, res) => {
       }
     }
 
-   
     await material.destroy();
-
-    console.log(`✔️ Materijal #${materialId} obrisan.`);
     res.status(204).send();
   } catch (error) {
     console.error('❌ Greška pri brisanju materijala:', error);
@@ -462,6 +455,7 @@ app.patch('/materials/:id/hide', async (req, res) => {
     res.status(500).json({ error: 'Greška pri promjeni vidljivosti.' });
   }
 });
+
 
   
 
@@ -1467,6 +1461,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
