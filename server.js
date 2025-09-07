@@ -13,6 +13,7 @@ const ReadMaterial = require('./Models/ReadMaterial');
 const Message = require('./Models/message');
 const { Op } = require('sequelize');
 const Sequelize = require('sequelize');
+const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
 const { v2: cloudinary } = require('cloudinary');
 cloudinary.config({
@@ -540,7 +541,48 @@ app.get('/download/local/:stored', async (req, res) => {
   }
 });
 
+app.get('/download/material/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const m = await Material.findByPk(id);
+    if (!m || !m.fileUrl) return res.status(404).json({ error: 'Materijal nije pronađen' });
 
+    
+    let desired = (m.naziv || 'datoteka').toString().replace(/[^\w.-]+/g, '_');
+    
+    try {
+      const u = new URL(m.fileUrl);
+      const p = u.pathname;
+      const extMatch = p.match(/\.(pdf|pptx?|docx?|xlsx?|zip|png|jpe?g|gif)$/i);
+      if (extMatch) desired += extMatch[0].toLowerCase();
+    } catch { /* ignore */ }
+
+    
+    if (/\/uploads\//.test(m.fileUrl) && !/^https?:\/\//i.test(m.fileUrl)) {
+      const stored = decodeURIComponent(m.fileUrl.split('/uploads/')[1] || '');
+      const full = path.join(__dirname, 'uploads', stored);
+      return res.download(full, desired);
+    }
+
+    
+    if (/\/uploads\//.test(m.fileUrl) && /^https?:\/\//i.test(m.fileUrl)) {
+      const stored = decodeURIComponent((new URL(m.fileUrl)).pathname.split('/uploads/')[1] || '');
+      const full = path.join(__dirname, 'uploads', stored);
+      return res.download(full, desired);
+    }
+
+    const r = await fetch(m.fileUrl);
+    if (!r.ok) return res.status(502).json({ error: 'Ne mogu dohvatiti datoteku.' });
+
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${desired}"`);
+ 
+    r.body.pipe(res);
+  } catch (e) {
+    console.error('Download error:', e);
+    res.status(500).json({ error: 'Greška pri preuzimanju.' });
+  }
+});
 
 
 app.get('/quizzes', async (req, res) => {
@@ -1510,6 +1552,7 @@ sequelize.authenticate()
   .catch(err => {
     console.error('Nije moguće uspostaviti vezu s bazom:', err);
   });
+
 
 
 
